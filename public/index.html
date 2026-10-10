@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>رادار الجزيرة الجوي</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+/* Layout: full-bleed map, broadcast top strip, docked control panel (bottom sheet on phones) */
+:root{
+  --ink:#070b12; --panel:rgba(10,16,26,.88); --line:rgba(140,170,210,.18);
+  --text:#e6edf6; --mute:#8a9bb3; --live:#ff3b3b; --accent:#ffb627;
+  --sa:#22c08a; --ye:#e8475f;
+  --f-ui:"IBM Plex Sans Arabic",system-ui,sans-serif; --f-data:"IBM Plex Mono",ui-monospace,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--ink);color:var(--text);font-family:var(--f-ui);font-size:14px}
+#map{position:fixed;inset:0;background:var(--ink)}
+.leaflet-container{background:var(--ink);font-family:var(--f-ui)}
+.leaflet-control-attribution{background:rgba(7,11,18,.7)!important;color:var(--mute)!important;font-size:10px}
+.leaflet-control-attribution a{color:var(--mute)!important}
+
+/* top strip */
+.strip{position:fixed;top:0;inset-inline:0;z-index:1000;display:flex;align-items:center;gap:12px;flex-wrap:wrap;
+  padding:calc(env(safe-area-inset-top,0px) + 10px) 16px 10px;
+  background:linear-gradient(to bottom,rgba(7,11,18,.95),rgba(7,11,18,.0));pointer-events:none}
+.strip>*{pointer-events:auto}
+.live{display:inline-flex;align-items:center;gap:7px;background:var(--live);color:#fff;font-weight:700;
+  padding:4px 10px 4px 12px;border-radius:3px;letter-spacing:.04em;font-size:13px}
+.live i{width:8px;height:8px;border-radius:50%;background:#fff;animation:blink 1.2s infinite}
+.live.off{background:#55606f}.live.off i{animation:none;opacity:.5}
+@keyframes blink{50%{opacity:.2}}
+h1{margin:0;font-size:18px;font-weight:700;text-wrap:balance}
+h1 small{display:block;font-size:11px;font-weight:400;color:var(--mute);letter-spacing:.02em}
+.clock{margin-inline-start:auto;font-family:var(--f-data);font-size:12px;color:var(--mute);text-align:end;line-height:1.5}
+.clock b{color:var(--text);font-weight:600}
+
+/* panel */
+.panel{position:fixed;z-index:1000;top:calc(env(safe-area-inset-top,0px) + 74px);inset-inline-start:16px;width:300px;
+  max-height:calc(100% - 100px);overflow:auto;background:var(--panel);backdrop-filter:blur(10px);
+  border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:14px}
+.sec h2{margin:0 0 8px;font-size:11px;font-weight:500;color:var(--mute);letter-spacing:.06em}
+.counts{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.cnt{border:1px solid var(--line);border-radius:8px;padding:8px}
+.cnt b{display:block;font-family:var(--f-data);font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
+.cnt span{font-size:11px;color:var(--mute)}
+.cnt.sa b{color:var(--sa)}.cnt.ye b{color:var(--ye)}
+.seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden}
+.seg button{flex:1;background:none;border:0;color:var(--mute);font:inherit;padding:7px 4px;cursor:pointer}
+.seg button.on{background:rgba(255,182,39,.16);color:var(--accent);font-weight:700}
+.seg button:focus-visible,.btn:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.range{display:flex;flex-direction:column;gap:6px}
+.range label{display:flex;justify-content:space-between;font-size:12px;color:var(--mute)}
+.range label b{font-family:var(--f-data);color:var(--text);font-weight:400}
+input[type=range]{width:100%;accent-color:var(--accent)}
+.toggles{display:flex;flex-direction:column;gap:6px;font-size:13px}
+.toggles label{display:flex;align-items:center;gap:8px;cursor:pointer}
+input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
+.bars{display:flex;flex-direction:column;gap:5px}
+.bar{display:grid;grid-template-columns:1fr auto;gap:8px;font-size:12px;align-items:center}
+.bar .t{position:relative;padding:3px 6px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar .t i{position:absolute;inset-block:0;inset-inline-start:0;background:rgba(255,182,39,.18);border-radius:3px;z-index:-1}
+.bar .n{font-family:var(--f-data);color:var(--mute);font-variant-numeric:tabular-nums}
+.legend{height:8px;border-radius:4px;background:linear-gradient(to left,#36d1ff,#46e08f,#ffd23f,#ff8a3d,#ff3dbb)}
+.legend-l{display:flex;justify-content:space-between;font-family:var(--f-data);font-size:10px;color:var(--mute);margin-top:4px}
+.src{font-size:11px;color:var(--mute);line-height:1.6}
+.src b{color:var(--text);font-weight:500}
+.err{color:#ff8a8a}
+.btn{background:rgba(255,182,39,.14);border:1px solid rgba(255,182,39,.4);color:var(--accent);border-radius:6px;
+  font:inherit;font-size:12px;padding:6px 10px;cursor:pointer}
+.fold{display:none}
+
+/* details card */
+.card{position:fixed;z-index:1001;bottom:calc(env(safe-area-inset-bottom,0px) + 16px);inset-inline-end:16px;width:300px;
+  background:var(--panel);backdrop-filter:blur(10px);border:1px solid var(--line);border-top:3px solid var(--accent);
+  border-radius:10px;padding:14px}
+.card .cs{font-family:var(--f-data);font-size:24px;font-weight:600;letter-spacing:.04em;direction:ltr;text-align:right}
+.card .al{color:var(--mute);font-size:13px;margin-bottom:10px}
+.card .x{position:absolute;top:8px;inset-inline-end:10px;background:none;border:0;color:var(--mute);font-size:20px;cursor:pointer}
+.kv{display:grid;grid-template-columns:1fr 1fr;gap:8px 12px}
+.kv div span{display:block;font-size:10px;color:var(--mute);letter-spacing:.05em}
+.kv div b{font-family:var(--f-data);font-weight:400;font-size:14px;direction:ltr;unicode-bidi:isolate}
+.where{display:inline-block;margin-top:10px;font-size:11px;padding:2px 8px;border-radius:3px;border:1px solid var(--line)}
+
+/* plane icons */
+.pl{width:22px;height:22px}
+.pl svg{width:22px;height:22px;filter:drop-shadow(0 0 3px rgba(0,0,0,.9));transition:transform .4s}
+.pl.sel svg{filter:drop-shadow(0 0 6px var(--accent))}
+.pl.gnd svg{opacity:.5}
+.apt{font-family:var(--f-data);font-size:10px;color:var(--mute);white-space:nowrap;text-shadow:0 0 3px #000}
+.apt i{display:inline-block;width:6px;height:6px;border:1.5px solid var(--mute);transform:rotate(45deg);margin-inline-end:4px}
+
+@media (max-width:700px){
+  .panel{top:auto;bottom:calc(env(safe-area-inset-bottom,0px) + 10px);inset-inline:10px;width:auto;max-height:46%;padding:12px;gap:12px}
+  .panel.min .more{display:none}
+  .fold{display:block;align-self:center;background:none;border:0;color:var(--mute);font:inherit;font-size:12px;cursor:pointer;padding:0}
+  .card{inset-inline:10px;width:auto;bottom:auto;top:calc(env(safe-area-inset-top,0px) + 70px)}
+  h1{font-size:15px}
+  .clock{font-size:11px}
+}
+@media (prefers-reduced-motion:reduce){.live i{animation:none}.pl svg{transition:none}}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<header class="strip">
+  <span class="live off" id="live"><i></i>مباشر</span>
+  <h1>حركة الطيران فوق السعودية واليمن<small>بيانات ADS-B مفتوحة · تحديث تلقائي</small></h1>
+  <div class="clock"><div>آخر تحديث <b id="upd">—</b></div><div id="utc">—</div></div>
+</header>
+
+<aside class="panel min" id="panel">
+  <button class="fold" id="fold" type="button">▲ المزيد من الأدوات</button>
+  <div class="sec">
+    <h2>الطائرات الآن</h2>
+    <div class="counts">
+      <div class="cnt"><b id="cAll">0</b><span>الإجمالي</span></div>
+      <div class="cnt sa"><b id="cSa">0</b><span>السعودية</span></div>
+      <div class="cnt ye"><b id="cYe">0</b><span>اليمن</span></div>
+    </div>
+  </div>
+  <div class="sec">
+    <h2>عرض حسب الدولة</h2>
+    <div class="seg" id="seg">
+      <button type="button" data-v="all" class="on">الكل</button>
+      <button type="button" data-v="sa">السعودية</button>
+      <button type="button" data-v="ye">اليمن</button>
+    </div>
+  </div>
+  <div class="sec more">
+    <h2>الارتفاع (قدم)</h2>
+    <div class="range">
+      <label for="altMin">من <b id="altMinV">0</b></label>
+      <input type="range" id="altMin" min="0" max="45000" step="1000" value="0">
+      <label for="altMax">إلى <b id="altMaxV">45,000+</b></label>
+      <input type="range" id="altMax" min="0" max="45000" step="1000" value="45000">
+    </div>
+    <div style="margin-top:10px"><div class="legend"></div><div class="legend-l"><span>40k</span><span>30k</span><span>20k</span><span>10k</span><span>0</span></div></div>
+  </div>
+  <div class="sec more">
+    <h2>الخيارات</h2>
+    <div class="toggles">
+      <label><input type="checkbox" id="tTrails" checked> أثر المسار لكل الطائرات</label>
+      <label><input type="checkbox" id="tGround"> إظهار الطائرات على الأرض</label>
+      <label><input type="checkbox" id="tSat"> خلفية قمر صناعي</label>
+      <label><input type="checkbox" id="tApt" checked> المطارات الرئيسية</label>
+    </div>
+  </div>
+  <div class="sec more">
+    <h2>أكثر شركات الطيران حضوراً</h2>
+    <div class="bars" id="bars"><span class="src">بانتظار البيانات…</span></div>
+  </div>
+  <div class="sec more">
+    <h2>المصدر</h2>
+    <div class="src" id="src">جارٍ الاتصال…</div>
+  </div>
+</aside>
+
+<div class="card" id="card" hidden>
+  <button class="x" id="cardX" type="button" aria-label="إغلاق">×</button>
+  <div class="cs" id="dCs">—</div>
+  <div class="al" id="dAl">—</div>
+  <div class="kv">
+    <div><span>الارتفاع</span><b id="dAlt">—</b></div>
+    <div><span>السرعة الأرضية</span><b id="dSpd">—</b></div>
+    <div><span>الاتجاه</span><b id="dHdg">—</b></div>
+    <div><span>معدل الصعود/الهبوط</span><b id="dVs">—</b></div>
+    <div><span>الطراز</span><b id="dType">—</b></div>
+    <div><span>التسجيل</span><b id="dReg">—</b></div>
+    <div><span>كود ICAO</span><b id="dHex">—</b></div>
+    <div><span>Squawk</span><b id="dSq">—</b></div>
+  </div>
+  <span class="where" id="dWhere">—</span>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3.1.0/dist/topojson-client.min.js"></script>
+<script>
+(() => {
+'use strict';
+const BBOX = {s:11, n:33.5, w:33, e:61};
+const REFRESH_MS = 15000, STALE_MS = 75000, TRAIL_MAX = 40;
+// 250 NM circles covering Saudi Arabia + Yemen
+const POINTS = [[29.5,37.5],[29.5,43.5],[29,49],[24.5,38.5],[24.5,44.5],[24.5,50.5],[23,55.5],
+                [19.5,41.5],[19.5,47],[19.5,52.5],[14.5,44.5],[14.5,49.5]];
+const AIRLINES = {SVA:'السعودية',KNE:'طيران ناس',FAD:'طيران أديل',RXI:'طيران الرياض',IYE:'اليمنية',
+  UAE:'طيران الإمارات',ETD:'الاتحاد للطيران',QTR:'القطرية',FDB:'فلاي دبي',ABY:'العربية للطيران',GFA:'طيران الخليج',
+  KAC:'الكويتية',OMA:'الطيران العُماني',THY:'التركية',MSR:'مصر للطيران',RJA:'الملكية الأردنية',PIA:'الباكستانية',
+  AIC:'إير إنديا',IGO:'إنديغو',ETH:'الإثيوبية',SAW:'شام وينغز',SYR:'السورية',MEA:'طيران الشرق الأوسط',JZR:'طيران الجزيرة',
+  AXB:'إير إنديا إكسبريس',BAW:'البريطانية',DLH:'لوفتهانزا',AFR:'إير فرانس',KLM:'كي إل إم',SIA:'السنغافورية',
+  CPA:'كاثي باسيفيك',PGT:'بيغاسوس',RBG:'العربية مصر',SEY:'طيران سيشل',KQA:'الكينية',SVD:'السعودية الخاصة',
+  FDX:'فيديكس',UPS:'يو بي إس',CLX:'كارغولوكس',BBC:'بيمان',ALK:'سريلانكا',AZG:'سيلك واي'};
+const AIRPORTS = [['RUH','الرياض',24.957,46.698],['JED','جدة',21.679,39.156],['DMM','الدمام',26.471,49.798],
+  ['MED','المدينة',24.553,39.705],['AHB','أبها',18.240,42.656],['TIF','الطائف',21.483,40.544],
+  ['TUU','تبوك',28.365,36.619],['GIZ','جازان',16.901,42.586],['ELQ','القصيم',26.303,43.774],
+  ['SAH','صنعاء',15.476,44.219],['ADE','عدن',12.830,45.029],['RIY','المكلا',14.663,49.375],['GXF','سيئون',15.966,48.788]];
+
+const $ = id => document.getElementById(id);
+const state = {planes:new Map(), country:'all', altMin:0, altMax:45000, trails:true, ground:false, selected:null,
+  shapes:{sa:null, ye:null}, source:'', lastOk:0};
+
+/* ---------- map ---------- */
+const map = L.map('map', {zoomControl:false, worldCopyJump:false, preferCanvas:true}).setView([21.5, 46], 5);
+L.control.zoom({position:'bottomleft'}).addTo(map);
+const dark = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  {subdomains:'abcd', maxZoom:18, attribution:'© OpenStreetMap © CARTO'}).addTo(map);
+const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  {maxZoom:18, attribution:'Esri World Imagery'});
+const trailLayer = L.layerGroup().addTo(map);
+const planeLayer = L.layerGroup().addTo(map);
+const aptLayer = L.layerGroup().addTo(map);
+const canvasR = L.canvas({padding:.3});
+
+AIRPORTS.forEach(([c,n,la,lo]) => L.marker([la,lo], {interactive:false,
+  icon:L.divIcon({className:'apt', html:`<i></i>${c} · ${n}`, iconSize:null, iconAnchor:[4,5]})}).addTo(aptLayer));
+
+/* ---------- borders + point-in-polygon ---------- */
+function ringsOf(geom){ return geom.type==='Polygon' ? [geom.coordinates] : geom.coordinates; }
+function inRing(x,y,ring){ let c=false; for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+  const [xi,yi]=ring[i],[xj,yj]=ring[j]; if(((yi>y)!==(yj>y)) && x<(xj-xi)*(y-yi)/(yj-yi)+xi) c=!c; } return c; }
+function inGeom(lon,lat,geom){ if(!geom) return false;
+  for(const poly of ringsOf(geom)){ if(inRing(lon,lat,poly[0]) && !poly.slice(1).some(h=>inRing(lon,lat,h))) return true; } return false; }
+function countryOf(lon,lat){ if(inGeom(lon,lat,state.shapes.sa)) return 'sa'; if(inGeom(lon,lat,state.shapes.ye)) return 'ye'; return 'other'; }
+
+fetch('https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-50m.json').then(r=>r.json()).then(topo => {
+  const fc = topojson.feature(topo, topo.objects.countries);
+  for(const f of fc.features){
+    const id = String(f.id).padStart(3,'0');
+    if(id==='682'){ state.shapes.sa=f.geometry; L.geoJSON(f,{renderer:canvasR,interactive:false,style:{color:'#22c08a',weight:1.6,fill:true,fillOpacity:.04,dashArray:'4 4'}}).addTo(map); }
+    if(id==='887'){ state.shapes.ye=f.geometry; L.geoJSON(f,{renderer:canvasR,interactive:false,style:{color:'#e8475f',weight:1.6,fill:true,fillOpacity:.04,dashArray:'4 4'}}).addTo(map); }
+  }
+  state.planes.forEach(p => p.country = countryOf(p.lon,p.lat));
+  render();
+}).catch(()=>{});
+
+/* ---------- helpers ---------- */
+function altColor(ft){
+  if(ft==null) return '#9aa7b8';
+  const stops=[[0,[54,209,255]],[10000,[70,224,143]],[20000,[255,210,63]],[30000,[255,138,61]],[40000,[255,61,187]]];
+  if(ft<=0) return 'rgb(54,209,255)';
+  for(let i=1;i<stops.length;i++){ if(ft<=stops[i][0]){ const [a0,c0]=stops[i-1],[a1,c1]=stops[i],t=(ft-a0)/(a1-a0);
+    return `rgb(${c0.map((v,k)=>Math.round(v+(c1[k]-v)*t)).join(',')})`; } }
+  return 'rgb(255,61,187)';
+}
+const fmt = n => n==null||isNaN(n) ? '—' : Math.round(n).toLocaleString('en-US');
+const airlineOf = cs => { const p=(cs||'').slice(0,3).toUpperCase(); return /^[A-Z]{3}$/.test(p) && /\d/.test((cs||'')[3]||'') ? p : null; };
+const planeSvg = c => `<svg viewBox="0 0 24 24"><path fill="${c}" stroke="#000" stroke-width=".6" d="M12 1.5c.9 0 1.5 1.1 1.5 2.4v5.4l8.2 4.9v2.1l-8.2-2.5v4.6l2.3 1.8v1.7L12 21l-3.8.9v-1.7l2.3-1.8v-4.6l-8.2 2.5v-2.1l8.2-4.9V3.9c0-1.3.6-2.4 1.5-2.4z"/></svg>`;
+
+/* ---------- data: server proxy (/api/flights) ---------- */
+let busy = false;
+async function poll(){
+  if(busy) return; busy=true;
+  try{
+    const ctl = new AbortController(); const t=setTimeout(()=>ctl.abort(),55000);
+    const r = await fetch('/api/flights',{signal:ctl.signal,cache:'no-store'}); clearTimeout(t);
+    const j = await r.json().catch(()=>({}));
+    if(!r.ok || !j.source){
+      const e = j.errors ? Object.entries(j.errors).map(([k,v])=>k+': '+v).join(' · ') : 'HTTP '+r.status;
+      throw new Error(e);
+    }
+    state.source = j.source; ingest(j.planes||[]); state.lastOk=Date.now(); setLive(true); render();
+  }catch(e){ setLive(false, e.name==='AbortError'?'انتهت المهلة':e.message); }
+  finally{ busy=false; }
+}
+
+function ingest(list){
+  const now = Date.now();
+  for(const a of list){
+    if(a.lat<BBOX.s||a.lat>BBOX.n||a.lon<BBOX.w||a.lon>BBOX.e) continue;
+    let p = state.planes.get(a.hex);
+    if(!p){ p = {...a, trail:[], seen:now}; state.planes.set(a.hex,p); }
+    else Object.assign(p, a, {seen:now});
+    const last = p.trail[p.trail.length-1];
+    if(!last || last[0]!==a.lat || last[1]!==a.lon){ p.trail.push([a.lat,a.lon,a.alt]); if(p.trail.length>TRAIL_MAX) p.trail.shift(); }
+    p.country = countryOf(a.lon,a.lat);
+  }
+  for(const [h,p] of state.planes){ if(now-p.seen>STALE_MS){ removePlane(p); state.planes.delete(h); } }
+}
+function removePlane(p){ if(p.marker) planeLayer.removeLayer(p.marker); if(p.line) trailLayer.removeLayer(p.line); if(state.selected===p.hex) closeCard(); }
+
+/* ---------- render ---------- */
+function visible(p){
+  if(p.gnd && !state.ground) return false;
+  if(state.country!=='all' && p.country!==state.country) return false;
+  const a = p.alt??0;
+  if(a < state.altMin) return false;
+  if(state.altMax<45000 && a > state.altMax) return false;
+  return true;
+}
+function render(){
+  let all=0, sa=0, ye=0; const airl={};
+  for(const p of state.planes.values()){
+    if(!p.gnd){ all++; if(p.country==='sa') sa++; if(p.country==='ye') ye++; }
+    const show = visible(p), col = altColor(p.gnd?0:p.alt);
+    if(show){
+      if(!p.gnd){ const al=airlineOf(p.cs); if(al) airl[al]=(airl[al]||0)+1; }
+      if(!p.marker){
+        p.marker = L.marker([p.lat,p.lon], {icon:L.divIcon({className:'pl', html:planeSvg(col), iconSize:[22,22], iconAnchor:[11,11]}),
+          keyboard:false, title:p.cs||p.hex});
+        p.marker.on('click', ()=>select(p.hex));
+        planeLayer.addLayer(p.marker);
+      } else { p.marker.setLatLng([p.lat,p.lon]); if(!planeLayer.hasLayer(p.marker)) planeLayer.addLayer(p.marker); }
+      const el = p.marker.getElement();
+      if(el){ const svg=el.querySelector('svg'); svg.style.transform=`rotate(${p.trk||0}deg)`; svg.querySelector('path').setAttribute('fill',col);
+        el.classList.toggle('sel', state.selected===p.hex); el.classList.toggle('gnd', p.gnd); }
+      const wantTrail = (state.trails || state.selected===p.hex) && p.trail.length>1;
+      if(wantTrail){
+        const ll = p.trail.map(t=>[t[0],t[1]]);
+        const st = state.selected===p.hex ? {color:'#ffb627',weight:2.5,opacity:.95} : {color:col,weight:1.4,opacity:.45};
+        if(!p.line){ p.line = L.polyline(ll,{renderer:canvasR,interactive:false,...st}); trailLayer.addLayer(p.line); }
+        else { p.line.setLatLngs(ll); p.line.setStyle(st); if(!trailLayer.hasLayer(p.line)) trailLayer.addLayer(p.line); }
+      } else if(p.line) trailLayer.removeLayer(p.line);
+    } else {
+      if(p.marker) planeLayer.removeLayer(p.marker);
+      if(p.line) trailLayer.removeLayer(p.line);
+    }
+  }
+  $('cAll').textContent=all; $('cSa').textContent=sa; $('cYe').textContent=ye;
+  const top = Object.entries(airl).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  const max = top[0]?.[1]||1;
+  $('bars').innerHTML = top.length ? top.map(([c,n])=>`<div class="bar"><span class="t"><i style="width:${n/max*100}%"></i>${AIRLINES[c]||c} <span style="color:var(--mute);font-family:var(--f-data);font-size:10px">${c}</span></span><span class="n">${n}</span></div>`).join('')
+    : '<span class="src">لا توجد رحلات تجارية ضمن الفلتر الحالي</span>';
+  if(state.selected) fillCard();
+}
+
+/* ---------- details card ---------- */
+function select(hex){ state.selected=hex; $('card').hidden=false; render(); }
+function closeCard(){ state.selected=null; $('card').hidden=true; render(); }
+function fillCard(){
+  const p = state.planes.get(state.selected); if(!p){ closeCard(); return; }
+  const al = airlineOf(p.cs);
+  $('dCs').textContent = p.cs || p.hex.toUpperCase();
+  $('dAl').textContent = al ? (AIRLINES[al]||al) : (p.desc || p.origin || 'رحلة غير مصنّفة');
+  $('dAlt').textContent = p.gnd ? 'على الأرض' : fmt(p.alt)+' ft';
+  $('dSpd').textContent = p.spd==null?'—':fmt(p.spd)+' kt · '+fmt(p.spd*1.852)+' km/h';
+  $('dHdg').textContent = p.trk==null?'—':fmt(p.trk)+'°';
+  $('dVs').textContent = p.vs==null?'—':(p.vs>0?'+':'')+fmt(p.vs)+' ft/min';
+  $('dType').textContent = p.type||'—';
+  $('dReg').textContent = p.reg||'—';
+  $('dHex').textContent = p.hex.toUpperCase();
+  $('dSq').textContent = p.sq||'—';
+  const w = $('dWhere');
+  w.textContent = p.country==='sa'?'فوق الأجواء السعودية':p.country==='ye'?'فوق الأجواء اليمنية':'خارج حدود البلدين';
+  w.style.color = p.country==='sa'?'var(--sa)':p.country==='ye'?'var(--ye)':'var(--mute)';
+}
+$('cardX').onclick = closeCard;
+map.on('click', ()=>{ if(state.selected) closeCard(); });
+
+/* ---------- status ---------- */
+function setLive(ok, err){
+  $('live').classList.toggle('off', !ok);
+  if(ok){
+    $('upd').textContent = new Date().toLocaleTimeString('ar-AE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    $('src').innerHTML = `المصدر الحالي: <b>${state.source}</b><br>يتحدّث كل ${REFRESH_MS/1000} ثانية · الألوان حسب الارتفاع<br>تغطية اليمن محدودة لقلة المستقبلات الأرضية هناك.`;
+  } else {
+    $('src').innerHTML = `<span class="err">تعذّر الوصول لمصادر البيانات (${err||'خطأ شبكة'}).</span><br>سنعيد المحاولة تلقائياً.<br><button class="btn" id="retry" type="button">إعادة المحاولة الآن</button>`;
+    $('retry').onclick = poll;
+  }
+}
+setInterval(()=>{ $('utc').textContent = new Date().toISOString().slice(11,19)+' UTC';
+  if(state.lastOk && Date.now()-state.lastOk > REFRESH_MS*3) $('live').classList.add('off'); }, 1000);
+
+/* ---------- controls ---------- */
+$('seg').addEventListener('click', e=>{ const b=e.target.closest('button'); if(!b) return;
+  [...$('seg').children].forEach(x=>x.classList.toggle('on',x===b)); state.country=b.dataset.v;
+  const v = state.country==='sa'?[[16,34.5],[32.2,55.7]]:state.country==='ye'?[[12,42],[19,53.2]]:null;
+  if(v) map.fitBounds(v,{padding:[20,20]}); else map.setView([21.5,46],5);
+  render(); });
+function syncAlt(){ let a=+$('altMin').value, b=+$('altMax').value; if(a>b){ [a,b]=[b,a]; }
+  state.altMin=a; state.altMax=b; $('altMinV').textContent=fmt(a); $('altMaxV').textContent=b>=45000?'45,000+':fmt(b); render(); }
+$('altMin').oninput = syncAlt; $('altMax').oninput = syncAlt;
+$('tTrails').onchange = e=>{ state.trails=e.target.checked; render(); };
+$('tGround').onchange = e=>{ state.ground=e.target.checked; render(); };
+$('tSat').onchange = e=>{ if(e.target.checked){ map.removeLayer(dark); sat.addTo(map); } else { map.removeLayer(sat); dark.addTo(map); } };
+$('tApt').onchange = e=>{ e.target.checked ? aptLayer.addTo(map) : map.removeLayer(aptLayer); };
+$('fold').onclick = ()=>{ const p=$('panel'); p.classList.toggle('min'); $('fold').textContent = p.classList.contains('min')?'▲ المزيد من الأدوات':'▼ إخفاء الأدوات'; };
+map.on('zoomend', render);
+
+poll();
+setInterval(poll, REFRESH_MS);
+})();
+</script>
+</body>
+</html>
