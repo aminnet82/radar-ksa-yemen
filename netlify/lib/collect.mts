@@ -117,7 +117,7 @@ export async function collectAndSave(budgetMs: number): Promise<Snapshot> {
   const s = store()
   const prev = (await s.get("latest", { type: "json" }).catch(() => null)) as Snapshot | null
   const results = await Promise.all([
-    readsbSource("adsb.lol", (la, lo) => `https://api.adsb.lol/v2/point/${la}/${lo}/250`, 900, deadline),
+    readsbSource("adsb.lol", (la, lo) => `https://api.adsb.lol/v2/point/${la}/${lo}/250`, 2200, deadline),
     readsbSource("adsb.fi", (la, lo) => `https://opendata.adsb.fi/api/v2/lat/${la}/lon/${lo}/dist/250`, 1050, deadline),
     readsbSource("airplanes.live", (la, lo) => `https://api.airplanes.live/v2/point/${la}/${lo}/250`, 1050, deadline),
     openSkySource(),
