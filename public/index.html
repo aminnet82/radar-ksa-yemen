@@ -252,17 +252,21 @@ const planeSvg = c => `<svg viewBox="0 0 24 24"><path fill="${c}" stroke="#000" 
 
 /* ---------- data: server proxy (/api/flights) ---------- */
 let busy = false;
+let clockSkew = 0; // client clock minus server clock
 async function poll(){
   if(busy) return; busy=true;
   try{
-    const ctl = new AbortController(); const t=setTimeout(()=>ctl.abort(),55000);
+    const ctl = new AbortController(); const t=setTimeout(()=>ctl.abort(),20000);
     const r = await fetch('/api/flights',{signal:ctl.signal,cache:'no-store'}); clearTimeout(t);
     const j = await r.json().catch(()=>({}));
+    if(j.warming){ setWarming(); setTimeout(poll, 5000); return; }
     if(!r.ok || !j.source){
       const e = j.errors ? Object.entries(j.errors).map(([k,v])=>k+': '+v).join(' · ') : 'HTTP '+r.status;
       throw new Error(e);
     }
-    state.source = j.source; ingest(j.planes||[]); state.lastOk=Date.now(); setLive(true); render();
+    if(typeof j.age==='number') clockSkew = Date.now() - (j.time + j.age);
+    state.source = j.source; state.sources = j.sources||{}; state.dataTime = j.time;
+    ingest(j.planes||[]); state.lastOk=Date.now(); setLive(true); render();
   }catch(e){ setLive(false, e.name==='AbortError'?'انتهت المهلة':e.message); }
   finally{ busy=false; }
 }
@@ -274,11 +278,32 @@ function ingest(list){
     let p = state.planes.get(a.hex);
     if(!p){ p = {...a, trail:[], seen:now}; state.planes.set(a.hex,p); }
     else Object.assign(p, a, {seen:now});
+    p.rlat = a.lat; p.rlon = a.lon;              // last reported position
     const last = p.trail[p.trail.length-1];
     if(!last || last[0]!==a.lat || last[1]!==a.lon){ p.trail.push([a.lat,a.lon,a.alt]); if(p.trail.length>TRAIL_MAX) p.trail.shift(); }
     p.country = countryOf(a.lon,a.lat);
+    project(p, now);
   }
   for(const [h,p] of state.planes){ if(now-p.seen>STALE_MS){ removePlane(p); state.planes.delete(h); } }
+}
+
+// Dead reckoning: move each airborne plane along its track at its ground speed
+// between data updates (capped at 60s), so motion stays smooth.
+function project(p, now){
+  if(p.gnd || p.spd==null || p.trk==null || !p.posTime){ p.lat=p.rlat; p.lon=p.rlon; return; }
+  const dtH = Math.min(Math.max(now - clockSkew - p.posTime, 0), 60000) / 3600000;
+  const nm = p.spd * dtH, r = p.trk * Math.PI/180;
+  p.lat = p.rlat + nm*Math.cos(r)/60;
+  p.lon = p.rlon + nm*Math.sin(r)/(60*Math.cos(p.rlat*Math.PI/180));
+}
+setInterval(()=>{
+  if(document.hidden) return;
+  const now = Date.now();
+  for(const p of state.planes.values()){ project(p, now); if(p.marker && planeLayer.hasLayer(p.marker)) p.marker.setLatLng([p.lat,p.lon]); }
+}, 1000);
+function setWarming(){
+  $('live').classList.add('off');
+  $('src').innerHTML = 'جارٍ جمع البيانات من المصادر لأول مرة… تستغرق حوالي 20 ثانية.';
 }
 function removePlane(p){ if(p.marker) planeLayer.removeLayer(p.marker); if(p.line) trailLayer.removeLayer(p.line); if(state.selected===p.hex) closeCard(); }
 
@@ -355,7 +380,9 @@ function setLive(ok, err){
   $('live').classList.toggle('off', !ok);
   if(ok){
     $('upd').textContent = new Date().toLocaleTimeString('ar-AE',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-    $('src').innerHTML = `المصدر الحالي: <b>${state.source}</b><br>يتحدّث كل ${REFRESH_MS/1000} ثانية · الألوان حسب الارتفاع<br>تغطية اليمن محدودة لقلة المستقبلات الأرضية هناك.`;
+    const per = Object.entries(state.sources||{}).map(([k,v])=>`${k}: ${v.planes}`+(v.error?' <span class="err">('+v.coverage+')</span>':'')).join(' · ');
+    const age = state.dataTime ? Math.round((Date.now()-clockSkew-state.dataTime)/1000) : null;
+    $('src').innerHTML = `المصادر: <b>${state.source}</b><br>${per}<br>عمر البيانات ${age??'—'} ثانية · الحركة بين التحديثات تقديرية<br>تغطية اليمن ووسط السعودية محدودة لقلة المستقبلات الأرضية هناك.`;
   } else {
     $('src').innerHTML = `<span class="err">تعذّر الوصول لمصادر البيانات (${err||'خطأ شبكة'}).</span><br>سنعيد المحاولة تلقائياً.<br><button class="btn" id="retry" type="button">إعادة المحاولة الآن</button>`;
     $('retry').onclick = poll;
